@@ -7,7 +7,7 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-from datetime import date
+from datetime import date, datetime
 import os
 
 # ---------- CONFIGURAÇÃO DA PÁGINA ----------
@@ -38,6 +38,35 @@ CREATE TABLE IF NOT EXISTS movimentacoes (
 """)
 conn.commit()
 
+# ---------- FUNÇÃO SALDO MÊS ANTERIOR ----------
+def calcular_saldo_mes_anterior(mes_ano_atual):
+    mes, ano = mes_ano_atual.split("-")
+    mes = int(mes)
+    ano = int(ano)
+
+    if mes == 1:
+        mes_anterior = 12
+        ano_anterior = ano - 1
+    else:
+        mes_anterior = mes - 1
+        ano_anterior = ano
+
+    mes_ano_anterior = f"{mes_anterior:02d}-{ano_anterior}"
+
+    df_ant = pd.read_sql_query(
+        "SELECT tipo, valor FROM movimentacoes WHERE mes_ano = ?",
+        conn,
+        params=(mes_ano_anterior,)
+    )
+
+    if df_ant.empty:
+        return 0.0
+
+    entradas = df_ant[df_ant["tipo"] == "Entrada"]["valor"].sum()
+    saidas = df_ant[df_ant["tipo"] == "Saída"]["valor"].sum()
+
+    return entradas - saidas
+
 # ---------- SELEÇÃO DO MÊS ----------
 col_mes, col_vazio = st.columns([2, 8])
 with col_mes:
@@ -46,7 +75,7 @@ with col_mes:
         pd.date_range(start="2024-01-01", periods=120, freq="MS").strftime("%m-%Y")
     )
 
-# ---------- CARREGAR DADOS ----------
+# ---------- CARREGAR DADOS DO MÊS ----------
 df = pd.read_sql_query(
     "SELECT id, data, tipo, referente, valor FROM movimentacoes WHERE mes_ano = ? ORDER BY data",
     conn,
@@ -90,32 +119,38 @@ if st.button("💾 Salvar movimentação", use_container_width=True):
     st.success("Movimentação salva com sucesso!")
     st.rerun()
 
+# ---------- CÁLCULOS ----------
+saldo_anterior = calcular_saldo_mes_anterior(mes_ano)
+
+entradas_mes = df[df["tipo"] == "Entrada"]["valor"].sum() if not df.empty else 0
+saidas_mes = df[df["tipo"] == "Saída"]["valor"].sum() if not df.empty else 0
+saldo_atual = saldo_anterior + entradas_mes - saidas_mes
+
 # ---------- RESUMO ----------
 st.divider()
+st.subheader("📊 Resumo financeiro")
 
-entradas = df[df["tipo"] == "Entrada"]["valor"].sum() if not df.empty else 0
-saidas = df[df["tipo"] == "Saída"]["valor"].sum() if not df.empty else 0
-saldo = entradas - saidas
-
-r1, r2, r3 = st.columns(3)
-r1.metric("💵 Total de Entradas", f"R$ {entradas:,.2f}")
-r2.metric("💸 Total de Saídas", f"R$ {saidas:,.2f}")
-r3.metric("📌 Saldo", f"R$ {saldo:,.2f}")
+r1, r2, r3, r4 = st.columns(4)
+r1.metric("💵 Entradas do mês", f"R$ {entradas_mes:,.2f}")
+r2.metric("💸 Saídas do mês", f"R$ {saidas_mes:,.2f}")
+r3.metric("⏮️ Saldo anterior", f"R$ {saldo_anterior:,.2f}")
+r4.metric("📌 Saldo atual", f"R$ {saldo_atual:,.2f}")
 
 # ---------- GRÁFICOS ----------
 st.divider()
-st.subheader("📊 Gráficos do mês")
+st.subheader("📈 Evolução financeira")
 
 if not df.empty:
     st.bar_chart(df.groupby("tipo")["valor"].sum())
 
     df_graf = df.copy()
-    df_graf["saldo"] = df_graf.apply(
+    df_graf["mov"] = df_graf.apply(
         lambda x: x["valor"] if x["tipo"] == "Entrada" else -x["valor"],
         axis=1
-    ).cumsum()
+    )
 
-    st.line_chart(df_graf.set_index("data")["saldo"])
+    df_graf["saldo_acumulado"] = saldo_anterior + df_graf["mov"].cumsum()
+    st.line_chart(df_graf.set_index("data")["saldo_acumulado"])
 else:
     st.info("Nenhuma movimentação registrada neste mês.")
 
