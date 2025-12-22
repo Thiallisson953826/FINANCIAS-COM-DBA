@@ -1,0 +1,1 @@
+# Organizador Financeiro\nSistema financeiro mensal com SQLite.\nProduzido por Thiallisson
